@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#285d3a">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Full Body">
+  <meta name="description" content="Личный дневник тренировок: подходы, рабочие веса и твой прогресс.">
+  <title>Full Body — дневник тренировок</title>
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header"><div><p class="eyebrow" id="eyebrow">Твой прогресс</p><h1 id="page-title">Дашборд</h1></div><span id="save-state" class="save-state" role="status">Загрузка…</span></header>
+    <div id="storage-error" class="error-banner" role="alert" hidden></div>
+    <main id="main"><div class="empty-state"><h2>Открываем дневник</h2><p>Загружаем сохранённые тренировки.</p></div></main>
+    <nav class="bottom-nav" aria-label="Основная навигация">
+      <button type="button" data-page="dashboard" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 3v18h18M6 15l5-5 4 3 6-8"/></svg><span>Дашборд</span></button>
+      <button type="button" data-page="workout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 9v6m12-6v6M9 5v14m6-14v14M9 12h6M3 10v4m18-4v4"/></svg><span>Тренировка</span></button>
+      <button type="button" data-page="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h8m4 0h4M4 17h3m4 0h9"/><circle cx="14" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg><span>Настройки</span></button>
+    </nav>
+  </div>
+  <dialog id="sheet" aria-labelledby="sheet-title"><div class="sheet-header"><h2 id="sheet-title"></h2><button type="button" id="close-sheet" class="icon-button" aria-label="Закрыть">×</button></div><div id="sheet-content"></div></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <noscript>Для ведения дневника включи JavaScript в настройках браузера.</noscript>
+</body>
+</html>
