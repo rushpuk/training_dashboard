@@ -1,6 +1,8 @@
+import { EXTRA_EXERCISES, EXTRA_GUIDES } from './gym-catalog.js';
 export const GROUPS = [['legs','Ноги'],['chest','Грудь'],['back','Спина'],['shoulders','Плечи'],['triceps','Трицепс'],['biceps','Бицепс'],['abs','Пресс']];
 const ace = path => `https://www.acefitness.org/resources/everyone/exercise-library/${path}/`;
 export const GUIDES = {
+  ...EXTRA_GUIDES,
   legPress: {
     setup:['Прижми спину и таз к спинке. Поставь стопы на платформу и подбери положение сиденья, при котором пятки не отрываются.'],
     movement:['Плавно выжимай платформу, сохраняя опору всей стопой.','Верни платформу под контролем, сохраняя положение таза и поясницы.'],
@@ -88,6 +90,16 @@ const seed = [
   ['biceps','Сгибание рук с гантелями','biceps','Гантели','each'],
   ['crunch','Скручивания','abs','Коврик','bodyweight']
 ];
+export function upgradeCatalog(data){
+  let changed=false;
+  const ids=new Set(data.exercises.map(ex=>ex.id));
+  for(const [id,name,group,equipment,loadType] of [...seed,...EXTRA_EXERCISES]){
+    if(ids.has(id))continue;
+    data.exercises.push({id,name,group,equipment,loadType,baseId:id,machine:'',setup:'',notes:'',sourceUrl:'',favorite:false});ids.add(id);changed=true;
+  }
+  if(!data.settings.energy){data.settings.energy={bodyWeight:null,secondsPerRep:3,restSeconds:90};changed=true;}
+  return changed;
+}
 export function initialData() {
   const ids=['legPress','bench','pullDown','shoulderPress','lateral','triceps','biceps','crunch'];
   return {version:1,settings:{theme:'system',defaultSets:3,singleOpen:true,lastBackup:null},exercises:seed.map(([id,name,group,equipment,loadType])=>({id,name,group,equipment,loadType,baseId:id,machine:'',setup:'',notes:'',sourceUrl:'',favorite:ids.includes(id)})),templates:[{id:'full-body',name:'Full body',entries:ids.map(exerciseId=>({exerciseId,sets:3}))}],workouts:[],draft:null};

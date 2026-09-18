@@ -57,9 +57,14 @@ export function validateData(raw){
   const url=value=>{const text=string(value,2000);if(text){try{if(new URL(text).protocol!=='https:')fail();}catch{fail();}}return text;};
   const date=value=>{if(!validDate(value))fail();return value;};
   const timestamp=value=>{if(value===null)return null;if(typeof value!=='string'||!Number.isFinite(Date.parse(value)))fail();return value;};
+  const energy=value=>{
+    if(value===undefined||value===null)return null;
+    if(!obj(value)||(value.bodyWeight!==null&&(!Number.isFinite(value.bodyWeight)||value.bodyWeight<25||value.bodyWeight>350))||!Number.isFinite(value.secondsPerRep)||value.secondsPerRep<1||value.secondsPerRep>10||!Number.isInteger(value.restSeconds)||value.restSeconds<0||value.restSeconds>300)fail();
+    return {bodyWeight:value.bodyWeight,secondsPerRep:value.secondsPerRep,restSeconds:value.restSeconds};
+  };
   if(!obj(raw)||raw.version!==1||!obj(raw.settings))fail();
   if(!['system','light','dark'].includes(raw.settings.theme)||!Number.isInteger(raw.settings.defaultSets)||raw.settings.defaultSets<1||raw.settings.defaultSets>20||typeof raw.settings.singleOpen!=='boolean')fail();
-  const settings={theme:raw.settings.theme,defaultSets:raw.settings.defaultSets,singleOpen:raw.settings.singleOpen,lastBackup:timestamp(raw.settings.lastBackup)};
+  const settings={theme:raw.settings.theme,defaultSets:raw.settings.defaultSets,singleOpen:raw.settings.singleOpen,lastBackup:timestamp(raw.settings.lastBackup),energy:energy(raw.settings.energy)||{bodyWeight:null,secondsPerRep:3,restSeconds:90}};
   const exercises=unique(list(raw.exercises,2000).map(ex=>{
     if(!obj(ex)||!['legs','chest','back','shoulders','triceps','biceps','abs'].includes(ex.group)||!['total','each','bodyweight'].includes(ex.loadType)||typeof ex.favorite!=='boolean')fail();
     const name=string(ex.name,140);if(!name.trim())fail();
@@ -76,7 +81,7 @@ export function validateData(raw){
       if((set.done||!isDraft)&&(!Number.isFinite(parseNumber(weight))||parseNumber(weight)<0||parseNumber(weight)>100000||!Number.isInteger(parseNumber(reps))||parseNumber(reps)<1||parseNumber(reps)>10000||!set.done))fail();
       return {id:id(set.id),weight,reps,done:set.done,failure:set.failure};
     }))})));
-    const result={id:id(value.id),name:string(value.name,140),date:date(value.date),startedAt:timestamp(value.startedAt),endedAt:timestamp(value.endedAt),notes:string(value.notes,5000),entries};
+    const result={id:id(value.id),name:string(value.name,140),date:date(value.date),startedAt:timestamp(value.startedAt),endedAt:timestamp(value.endedAt),notes:string(value.notes,5000),energy:energy(value.energy),entries};
     if(!isDraft&&!entries.some(entry=>entry.sets.length))fail();
     if(isDraft)result.editingId=value.editingId===null?null:id(value.editingId);
     return result;

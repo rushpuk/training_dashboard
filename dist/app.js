@@ -1,5 +1,7 @@
-import { GROUPS, GUIDES, initialData } from './catalog.js';
+import { GROUPS, GUIDES, initialData, upgradeCatalog } from './catalog.js';
 import { loadData, saveData, validateData, validDate, parseNumber } from './storage.js';
+import { DEFAULT_ENERGY, ENERGY_SOURCE, energyProfile, exerciseMET, entryEnergy, workoutEnergy, periodEnergy } from './energy.js';
+import { EXERCISE_MEDIA } from './exercise-media.js';
 
 const main=document.querySelector('#main');
 const sheet=document.querySelector('#sheet');
@@ -19,6 +21,7 @@ function formatDate(value,month='long'){return new Date(`${value}T12:00:00`).toL
 function exById(id){return data.exercises.find(ex=>ex.id===id);}
 function exerciseName(ex){return ex.machine?`${ex.name} · ${ex.machine}`:ex.name;}
 function groupName(id){return GROUPS.find(group=>group[0]===id)?.[1]||id;}
+function calorieLabel(value){return value===null?'Укажи вес тела':`≈ ${n(Math.round(value))} ккал`;}
 function quantity(value,words){const mod=value%100;return `${n(value)} ${mod>=11&&mod<=14?words[2]:value%10===1?words[0]:value%10>=2&&value%10<=4?words[1]:words[2]}`;}
 function setLabel(set,ex){return ex.loadType==='bodyweight'?`${n(parseNumber(set.reps))} повт.`:`${n(parseNumber(set.weight))} кг × ${n(parseNumber(set.reps))}`;}
 function el(tag,className='',text){const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node;}
@@ -29,8 +32,10 @@ function select(options,value){const node=el('select');for(const [id,label] of o
 function row(...children){const node=el('div','row');node.append(...children);return node;}
 function empty(title,message,button){const node=el('div','empty-state');node.append(el('div','empty-mark','↗'),el('h2','',title),el('p','',message));if(button)node.append(button);return node;}
 function notify(message){const node=document.querySelector('#toast');clearTimeout(toastTimer);node.textContent=message;node.hidden=false;toastTimer=setTimeout(()=>node.hidden=true,4300);}
-function showSheet(title,content){document.querySelector('#sheet-title').textContent=title;sheetContent.replaceChildren(content);if(!sheet.open)sheet.showModal();sheet.scrollTop=0;}
-function closeSheet(){sheet.close();}
+function stopMedia(){sheetContent.querySelectorAll('video').forEach(video=>video.pause());}
+function showSheet(title,content){stopMedia();document.querySelector('#sheet-title').textContent=title;sheetContent.replaceChildren(content);if(!sheet.open)sheet.showModal();sheet.scrollTop=0;}
+function closeSheet(){stopMedia();sheet.close();}
+sheet.addEventListener('close',stopMedia);
 document.querySelector('#close-sheet').addEventListener('click',closeSheet);
 sheet.addEventListener('click',event=>{if(event.target===sheet){const rect=sheet.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeSheet();}});
 function confirmAction(title,message,onConfirm,label='Подтвердить',danger=false){const body=el('div','stack');body.append(el('p','',message));const buttons=el('div','button-row');buttons.append(action('Отмена','outline',closeSheet),action(label,danger?'danger':'primary',async()=>{await onConfirm();}));body.append(buttons);showSheet(title,body);}
@@ -53,7 +58,7 @@ function newSet(ex,previous){return {id:uid(),weight:ex.loadType==='bodyweight'?
 function newEntry(exerciseId,count=data.settings.defaultSets,source){const ex=exById(exerciseId);return {id:uid(),exerciseId,note:'',sets:Array.from({length:count},(_,index)=>newSet(ex,source?.sets[index]))};}
 function beginWorkout(template,source,date=today(),name){
   if(data.draft){navigate('workout');notify('Сначала заверши текущую тренировку или сохрани редактирование.');return;}
-  data.draft={id:uid(),name:name?.trim()||source?.name||template?.name||'Тренировка',date,startedAt:new Date().toISOString(),endedAt:null,notes:'',editingId:null,entries:source?source.entries.map(entry=>newEntry(entry.exerciseId,entry.sets.length,entry)):template?template.entries.map(entry=>newEntry(entry.exerciseId,entry.sets)):[]};
+  data.draft={id:uid(),name:name?.trim()||source?.name||template?.name||'Тренировка',date,startedAt:new Date().toISOString(),endedAt:null,notes:'',editingId:null,energy:structuredClone(data.settings.energy),entries:source?source.entries.map(entry=>newEntry(entry.exerciseId,entry.sets.length,entry)):template?template.entries.map(entry=>newEntry(entry.exerciseId,entry.sets)):[]};
   view.open=new Set([exById(data.draft.entries[0]?.exerciseId)?.group||'legs']);persist();navigate('workout');
 }
 function previousResult(exerciseId){
@@ -68,6 +73,8 @@ function updateWorkoutCounts(){
   const progress=main.querySelector('[data-progress]');if(progress){progress.style.width=`${total?done/total*100:0}%`;progress.parentElement.setAttribute('aria-valuenow',String(done));progress.parentElement.setAttribute('aria-valuemax',String(total));}
   for(const [id] of GROUPS){const label=main.querySelector(`[data-summary="${id}"]`);if(!label)continue;const groupEntries=draftEntries(id);label.textContent=groupEntries.length?`${groupEntries.length===1?exerciseName(exById(groupEntries[0].exerciseId)):quantity(groupEntries.length,['упражнение','упражнения','упражнений'])} · ${completedCount(groupEntries)} / ${groupEntries.reduce((sum,entry)=>sum+entry.sets.length,0)}`:'Добавь упражнение';}
   const finish=main.querySelector('[data-finish]');if(finish)finish.disabled=done===0;
+  const energy=main.querySelector('[data-workout-energy]');if(energy)energy.textContent=calorieLabel(workoutEnergy(data.draft,data.exercises,data.settings));
+  main.querySelectorAll('[data-entry-energy]').forEach(node=>{const entry=entries.find(item=>item.id===node.dataset.entryEnergy);node.textContent=calorieLabel(entryEnergy(entry,exById(entry.exerciseId),energyProfile(data.draft,data.settings)));});
 }
 function renderWorkout(){
   if(!data.draft){
@@ -84,6 +91,7 @@ function renderWorkout(){
   const workout=data.draft;
   const header=el('div','workout-head');const date=input(workout.date,'date');date.max=today();date.setAttribute('aria-label','Дата тренировки');date.addEventListener('change',()=>{if(!validDate(date.value)||date.value>today()){date.value=workout.date;notify('Выбери корректную дату.');return;}workout.date=date.value;persist();render();});
   const count=el('span','small');count.dataset.workoutCount='';header.append(row(date,count));const track=el('div','progress-track');track.setAttribute('role','progressbar');track.setAttribute('aria-label','Выполненные подходы');track.setAttribute('aria-valuemin','0');const fill=el('span');fill.dataset.progress='';track.append(fill);header.append(track);main.append(header);
+  const energyButton=action('','energy-inline',()=>configureCalories(workout));energyButton.dataset.workoutEnergy='';energyButton.setAttribute('aria-label','Примерный расход калорий и параметры расчёта');header.append(energyButton);
   if(workout.editingId)main.append(el('p','notice','Изменения попадут в историю после нажатия «Сохранить изменения».'));
   GROUPS.forEach(([id,name],index)=>{
     const details=el('details','group');details.open=view.open.has(id);details.dataset.group=id;const summary=el('summary');summary.setAttribute('aria-label',name);
@@ -101,6 +109,7 @@ function renderExercise(entry){
   const title=el('div');title.append(el('h3','',exerciseName(ex)),el('small','',`${ex.equipment}${ex.loadType==='each'?' · вес одной гантели':ex.loadType==='bodyweight'?' · без внешнего веса':' · общий вес, кг'}`));
   container.append(row(title,action('⋯','icon-button',()=>entryOptions(entry))));
   const toolbar=el('div','exercise-toolbar');toolbar.append(action('Техника','',()=>openTechnique(ex)),action('Тренажёр и настройки','',()=>exerciseSettings(ex)),action('Заменить','',()=>openCatalog({group:ex.group,onPick:id=>replaceExercise(entry,id)})));container.append(toolbar);
+  const energy=el('p','small exercise-energy');energy.dataset.entryEnergy=entry.id;container.append(energy);
   const previous=previousResult(ex.id),past=el('div','previous');past.append(el('small','',previous?`В прошлый раз · ${formatDate(previous.date)}`:'В прошлый раз'));
   if(previous){past.append(el('strong','',previous.sets.map(set=>setLabel(set,ex)).join(' / ')));past.append(action('Подставить в пустые поля','quiet full',()=>{entry.sets.forEach((set,index)=>{if(set.done)return;const old=previous.sets[index]||previous.sets.at(-1);if(set.weight==='')set.weight=old.weight;if(set.reps==='')set.reps=old.reps;});persist();render();}));}else past.append(el('span','small','Первая запись. Здесь появится твой прошлый результат.'));container.append(past);
   if(ex.setup)container.append(el('p','small preserve-lines',ex.setup));
@@ -127,7 +136,7 @@ function replaceExercise(entry,id){entry=data.draft?.entries.find(item=>item.id=
 function entryOptions(entry){const body=el('div','stack');const move=direction=>{const entries=data.draft.entries,index=entries.indexOf(entry);let next=index+direction;while(next>=0&&next<entries.length&&exById(entries[next].exerciseId).group!==exById(entry.exerciseId).group)next+=direction;if(next<0||next>=entries.length)return;[entries[index],entries[next]]=[entries[next],entries[index]];persist();closeSheet();render();};body.append(action('Выше в группе','outline',()=>move(-1)),action('Ниже в группе','outline',()=>move(1)),action('Убрать из тренировки','danger',()=>confirmAction('Убрать упражнение?','Его подходы в текущей тренировке будут удалены. Прошлая история сохранится.',()=>{data.draft.entries=data.draft.entries.filter(item=>item.id!==entry.id);persist();closeSheet();render();},'Убрать',true)));showSheet(exerciseName(exById(entry.exerciseId)),body);}
 async function finishWorkout(){
   const draft=data.draft;if(!draft||!completedCount(draft.entries)){notify('Отметь хотя бы один выполненный подход.');return;}
-  const finish=async()=>{const next=structuredClone(data);const workout=structuredClone(next.draft);workout.name=workout.name.trim()||'Тренировка';workout.entries=workout.entries.map(entry=>({...entry,sets:entry.sets.filter(set=>set.done)})).filter(entry=>entry.sets.length);workout.endedAt=new Date().toISOString();if(workout.editingId)workout.id=workout.editingId;delete workout.editingId;const index=next.workouts.findIndex(item=>item.id===workout.id);if(index>=0)next.workouts[index]=workout;else next.workouts.push(workout);next.draft=null;if(await commit(next)){closeSheet();view.day=workout.date;view.month=workout.date.slice(0,7);view.period='day';navigate('dashboard');notify('Тренировка сохранена.');}};
+  const finish=async()=>{const next=structuredClone(data);const workout=structuredClone(next.draft);workout.name=workout.name.trim()||'Тренировка';workout.entries=workout.entries.map(entry=>({...entry,sets:entry.sets.filter(set=>set.done)})).filter(entry=>entry.sets.length);workout.endedAt=new Date().toISOString();workout.energy=structuredClone(energyProfile(workout,next.settings));if(workout.editingId)workout.id=workout.editingId;delete workout.editingId;const index=next.workouts.findIndex(item=>item.id===workout.id);if(index>=0)next.workouts[index]=workout;else next.workouts.push(workout);next.draft=null;if(await commit(next)){closeSheet();view.day=workout.date;view.month=workout.date.slice(0,7);view.period='day';navigate('dashboard');notify('Тренировка сохранена.');}};
   const unfinished=draft.entries.some(entry=>entry.sets.some(set=>!set.done&&(set.reps||set.weight&&exById(entry.exerciseId).loadType!=='bodyweight')));
   if(unfinished)confirmAction('Завершить тренировку?','Есть заполненные, но не отмеченные подходы. В историю попадут только подходы с галочкой.',finish,'Сохранить выполненное');else await finish();
 }
@@ -140,6 +149,7 @@ function renderDashboard(){
   const workouts=data.workouts.filter(workout=>dayMode?workout.date===view.day:workout.date.startsWith(view.month)).sort((a,b)=>a.date.localeCompare(b.date)||(a.endedAt||'').localeCompare(b.endedAt||''));
   const entries=workouts.flatMap(workout=>workout.entries),sets=entries.flatMap(entry=>entry.sets);const metrics=el('div','metrics');
   for(const [value,label] of [[dayMode?entries.length:workouts.length,dayMode?'упражнений':'тренировок'],[sets.length,'подходов'],[sets.reduce((sum,set)=>sum+parseNumber(set.reps),0),'повторов']]){const metric=el('div');metric.append(el('strong','',n(value)),el('span','',label));metrics.append(metric);}main.append(metrics);
+  main.append(energySummary(workouts,dayMode?'За день':'За месяц'));
   if(!data.workouts.length){main.append(empty('Здесь будет твой прогресс','Запиши первую тренировку — появятся график рабочих весов и история подходов.',action(data.draft?'Продолжить тренировку':'Начать тренировку','primary full',()=>navigate('workout'))));return;}
   if(dayMode){renderDay(workouts);return;}
   const chartCard=el('section','card');const availableIds=[...new Set(data.workouts.flatMap(workout=>workout.entries.map(entry=>entry.exerciseId)))];if(!availableIds.includes(view.exerciseId))view.exerciseId=availableIds[0];
@@ -149,7 +159,7 @@ function renderDashboard(){
   main.append(chartCard);requestAnimationFrame(()=>drawChart(svg,detail));
   main.append(el('h2','section-title','Тренировки месяца'));
   if(!workouts.length)main.append(empty('В этом месяце пока пусто','Можно выбрать другой месяц или добавить тренировку задним числом.',action('Записать тренировку','secondary full',()=>navigate('workout'))));
-  workouts.slice().reverse().forEach(workout=>{const button=action('','history-item',()=>{view.period='day';view.day=workout.date;render();window.scrollTo({top:0});});const title=el('span');title.append(el('strong','',`${formatDate(workout.date)} · ${workout.name}`),el('small','',`${quantity(workout.entries.length,['упражнение','упражнения','упражнений'])} · ${quantity(workout.entries.flatMap(entry=>entry.sets).length,['подход','подхода','подходов'])}`));button.append(title,el('span','chevron','›'));main.append(button);});
+  workouts.slice().reverse().forEach(workout=>{const button=action('','history-item',()=>{view.period='day';view.day=workout.date;render();window.scrollTo({top:0});});const title=el('span');title.append(el('strong','',`${formatDate(workout.date)} · ${workout.name}`),el('small','',`${quantity(workout.entries.length,['упражнение','упражнения','упражнений'])} · ${quantity(workout.entries.flatMap(entry=>entry.sets).length,['подход','подхода','подходов'])}`));title.append(el('small','',calorieLabel(workoutEnergy(workout,data.exercises,data.settings))));button.append(title,el('span','chevron','›'));main.append(button);});
 }
 function chartPoints(){
   const ex=exById(view.exerciseId);return data.workouts.filter(workout=>workout.date.startsWith(view.month)).sort((a,b)=>a.date.localeCompare(b.date)||(a.endedAt||'').localeCompare(b.endedAt||'')).flatMap(workout=>{
@@ -184,14 +194,15 @@ function renderDay(workouts){
   const distribution=el('section','card');distribution.append(el('h2','','Подходы по группам'));const counts=GROUPS.map(([id,label])=>({label,count:workouts.flatMap(workout=>workout.entries).filter(entry=>exById(entry.exerciseId).group===id).reduce((sum,entry)=>sum+entry.sets.length,0)}));const maximum=Math.max(1,...counts.map(group=>group.count));
   counts.forEach(group=>{const line=el('div','muscle-row');line.append(el('span','',group.label));const track=el('div','muscle-track'),fill=el('span');fill.style.width=`${group.count/maximum*100}%`;track.append(fill);line.append(track,el('strong','',n(group.count)));distribution.append(line);});main.append(distribution);
   workouts.forEach(workout=>{
-    const card=el('section','card');card.append(row(el('h2','',workout.name),action('Изменить','quiet',()=>editWorkout(workout))));card.append(el('p','small',formatDate(workout.date)));
-    workout.entries.forEach(entry=>{const ex=exById(entry.exerciseId),result=el('div','result-entry');result.append(el('h3','',exerciseName(ex)));if(ex.loadType==='each')result.append(el('p','','Вес одной гантели'));const sets=el('div','result-sets');entry.sets.forEach(set=>sets.append(el('span','',`${setLabel(set,ex)}${set.failure?' · отказ':''}`)));result.append(sets);if(entry.note)result.append(el('p','preserve-lines',entry.note));card.append(result);});
+    const card=el('section','card');card.append(row(el('h2','',workout.name),action('Изменить','quiet',()=>editWorkout(workout))));card.append(el('p','small',`${formatDate(workout.date)} · ${calorieLabel(workoutEnergy(workout,data.exercises,data.settings))}`));
+    workout.entries.forEach(entry=>{const ex=exById(entry.exerciseId),result=el('div','result-entry');result.append(el('h3','',exerciseName(ex)));if(ex.loadType==='each')result.append(el('p','','Вес одной гантели'));const sets=el('div','result-sets');entry.sets.forEach(set=>sets.append(el('span','',`${setLabel(set,ex)}${set.failure?' · отказ':''}`)));result.append(sets,el('p','exercise-energy',calorieLabel(entryEnergy(entry,ex,energyProfile(workout,data.settings)))));if(entry.note)result.append(el('p','preserve-lines',entry.note));card.append(result);});
     if(workout.notes)card.append(el('p','footnote preserve-lines',workout.notes));const buttons=el('div','button-row spaced');buttons.append(action('Повторить','secondary',()=>beginWorkout(null,workout)),action('В шаблон','outline',()=>saveAsTemplate(workout)));card.append(buttons,action('Удалить тренировку','quiet full',()=>confirmAction('Удалить тренировку?',`${workout.name}, ${formatDate(workout.date)}: запись и её подходы будут удалены из истории.`,async()=>{const next=structuredClone(data);next.workouts=next.workouts.filter(item=>item.id!==workout.id);if(next.draft?.editingId===workout.id)next.draft=null;if(await commit(next)){closeSheet();render();}},'Удалить',true)));main.append(card);
   });
 }
 function editWorkout(workout){if(data.draft){notify('Сначала заверши текущую тренировку или редактирование.');navigate('workout');return;}data.draft={...structuredClone(workout),editingId:workout.id};view.open=new Set([exById(workout.entries[0]?.exerciseId)?.group||'legs']);persist();navigate('workout');}
 
 function renderSettings(){
+  const calories=el('section','card');calories.append(el('h2','','Расход калорий'),el('p','small',data.settings.energy.bodyWeight?`Масса тела ${n(data.settings.energy.bodyWeight)} кг · ${n(data.settings.energy.secondsPerRep)} с на повтор · отдых ${n(data.settings.energy.restSeconds)} с`:'Укажи массу тела, чтобы видеть примерный расход по упражнениям, дням и месяцам.'),action('Настроить расчёт','secondary full spaced',()=>configureCalories()));main.append(calories);
   const workout=el('section','card');workout.append(el('h2','','Тренировка'));
   const sets=select(Array.from({length:10},(_,index)=>[String(index+1),String(index+1)]),String(data.settings.defaultSets));sets.setAttribute('aria-label','Подходов по умолчанию');sets.addEventListener('change',()=>{data.settings.defaultSets=Number(sets.value);persist();});const setsLabel=el('div','', 'Подходов по умолчанию');setsLabel.append(el('small','','Для новых упражнений'));const setsRow=row(setsLabel,sets);setsRow.classList.add('setting-row');workout.append(setsRow);
   const single=el('div','setting-row');const toggle=input('','checkbox');toggle.checked=data.settings.singleOpen;toggle.id='single-open';toggle.addEventListener('change',()=>{data.settings.singleOpen=toggle.checked;if(toggle.checked&&view.open.size>1)view.open=new Set([view.open.values().next().value]);persist();});const toggleLabel=el('label','','Один раскрытый блок за раз');toggleLabel.htmlFor=toggle.id;single.append(toggleLabel,toggle);workout.append(single);
@@ -204,6 +215,46 @@ function renderSettings(){
   const file=input('','file');file.accept='.json,application/json';file.hidden=true;file.addEventListener('change',()=>{const selected=file.files[0];file.value='';if(selected)importBackup(selected);});
   const backupButtons=el('div','button-row spaced');backupButtons.append(action('Экспорт истории','secondary',()=>exportBackup()),action('Восстановить','outline',()=>file.click()));backup.append(backupButtons,file);main.append(backup);
   const install=el('section','card');install.append(el('h2','','На главный экран iPhone'),el('p','install-help','Открой приложение в Safari, нажми «Поделиться», затем «На экран Домой». Запускай дневник одним и тем же способом, чтобы открывать своё хранилище.'));main.append(install);
+}
+function energySummary(workouts,label){
+  const summary=periodEnergy(workouts,data.exercises,data.settings),card=el('section','card energy-card');
+  const title=el('div');title.append(el('span','small',`${label} · активные калории`),el('strong','energy-total',summary.missing?`${n(Math.round(summary.total))} ккал + ?`:`≈ ${n(Math.round(summary.total))} ккал`));
+  card.append(row(title,action('Расчёт','outline',()=>configureCalories())));
+  card.append(el('p','footnote',summary.missing?`Для ${quantity(summary.missing,['тренировки','тренировок','тренировок'])} не задан вес тела. Укажи его для полного итога.`:data.settings.energy.bodyWeight?'Примерная оценка по выполненным подходам. Разминка и переходы между упражнениями не учитываются.':'Для расчёта после первой тренировки укажи свой вес в настройках.'));
+  return card;
+}
+function configureCalories(workout=null){
+  const current=energyProfile(workout,data.settings)||DEFAULT_ENERGY,body=el('div','stack');
+  body.append(el('p','small',workout?'Параметры этой тренировки. При сохранении её оценка закрепится в истории.':'Параметры новых тренировок и старых записей без сохранённого веса тела. Уже сохранённые оценки не изменятся.'));
+  const weight=input(current.bodyWeight??'');weight.inputMode='decimal';weight.maxLength=6;weight.placeholder='Например, 80';
+  const tempo=select([['2','2 секунды'],['3','3 секунды'],['4','4 секунды'],['5','5 секунд'],['6','6 секунд']],String(current.secondsPerRep));
+  if(!tempo.value){const option=el('option','',`${n(current.secondsPerRep)} с`);option.value=String(current.secondsPerRep);tempo.append(option);tempo.value=option.value;}
+  const rest=input(String(current.restSeconds),'number');rest.min='0';rest.max='300';rest.step='1';
+  body.append(field('Масса тела, кг',weight,'Вес тела, а не вес снаряда. От 25 до 350 кг.'),field('Время одного повтора',tempo,'Полное движение туда и обратно. Это допущение для оценки длительности.'),field('Отдых между подходами, секунды',rest));
+  body.append(action('Сохранить параметры','primary',async()=>{
+    const bodyWeight=weight.value.trim()?parseNumber(weight.value):null,restSeconds=Number(rest.value);
+    if(bodyWeight!==null&&(!Number.isFinite(bodyWeight)||bodyWeight<25||bodyWeight>350)){notify('Укажи массу тела от 25 до 350 кг.');return;}
+    if(rest.value===''||!Number.isInteger(restSeconds)||restSeconds<0||restSeconds>300){notify('Укажи отдых от 0 до 300 секунд.');return;}
+    const profile={bodyWeight,secondsPerRep:Number(tempo.value),restSeconds},next=structuredClone(data);
+    if(workout){if(next.draft?.id!==workout.id){notify('Тренировка уже изменена. Открой её заново.');return;}next.draft.energy=profile;}else next.settings.energy=profile;
+    if(await commit(next)){closeSheet();render();notify('Параметры расчёта сохранены.');}
+  }));
+  const explanation=el('details','calorie-method');explanation.append(el('summary','','Как считается оценка'));
+  explanation.append(el('p','','Для каждого упражнения считаем время: выполненные повторы × секунды на повтор + паузы между выполненными подходами. Незаполненные и неотмеченные подходы не учитываются.'),el('p','','Активные ккал = (MET − 1) × 3,5 × масса тела / 200 × минуты. Из общей энергии вычитается расход в покое.'),el('p','','Берём категории из Compendium 2024: обычная силовая тренировка — 3,5 MET, приседания и становая тяга с весом — 5, упражнения с собственным весом — 3, лёгкие скручивания — 2,8. Это средние категории, а не измерение конкретного подхода.'),el('p','','Паузы учитываются внутри каждого упражнения, без паузы после последнего подхода. Общая длительность занятия, разминка, переходы и эффект после тренировки не добавляются. Вес снаряда и отметка «до отказа» не дают надёжного коэффициента калорий.'),el('p','','Оценка грубая: реальные темп, паузы и интенсивность могут заметно отличаться. Для односторонних движений записывай суммарные повторы обеих сторон. Для старых записей без параметров используются текущие настройки; сохрани запись через редактирование, чтобы закрепить их.'));
+  const link=el('a','','Источник MET: Compendium of Physical Activities');link.href=ENERGY_SOURCE;link.target='_blank';link.rel='noopener noreferrer';explanation.append(link);body.append(explanation);showSheet('Примерный расход калорий',body);
+}
+function techniqueMedia(ex,media){
+  const figure=el('figure','technique-media');
+  if(media.video){
+    const video=el('video');video.src=media.video;video.controls=true;video.loop=true;video.muted=true;video.playsInline=true;video.preload='none';video.setAttribute('aria-label',`Демонстрация: ${ex.name}`);if(media.poster)video.poster=media.poster;
+    const play=action('▶ Показать движение','secondary full',async()=>{try{await video.play();play.hidden=true;}catch{notify('Нажми кнопку воспроизведения на видео.');}});
+    video.addEventListener('error',()=>{play.hidden=true;video.hidden=true;figure.prepend(el('p','notice','Не удалось загрузить демонстрацию. Открой оригинал по ссылке ниже.'));});
+    figure.append(video,play,el('figcaption','small','Видео повторяется по кругу, без звука. Можно остановить и рассмотреть движение.'));
+  }else if(media.images?.length){
+    const positions=el('div','exercise-positions');media.images.forEach((src,index)=>{const frame=el('div');const image=el('img');image.src=src;image.alt=`${ex.name}: ${index===0?'начальное положение':'вторая фаза движения'}`;image.loading='lazy';image.width=320;image.height=320;image.addEventListener('error',()=>{image.hidden=true;frame.append(el('p','small','Фото недоступно — открой источник.'));});frame.append(image,el('span','small',index===0?'Начало':'Вторая фаза'));positions.append(frame);});figure.append(positions,el('figcaption','small','Два положения упражнения. Для этого варианта пока доступны фото, а не видео.'));
+  }
+  const credits=el('div','media-credits');const source=el('a','',media.author?`Демонстрация: ${media.author} · ${media.sourceName}`:media.sourceName);source.href=media.source;source.target='_blank';source.rel='noopener noreferrer';credits.append(source);
+  if(media.licenseUrl){const license=el('a','',media.license);license.href=media.licenseUrl;license.target='_blank';license.rel='noopener noreferrer';credits.append(license);}if(media.video)credits.append(el('span','','Видео уменьшено и перекодировано; звук удалён.'));figure.append(credits);return figure;
 }
 function saveAsTemplate(workout){const template={id:uid(),name:workout.name||'Моя тренировка',entries:workout.entries.map(entry=>({exerciseId:entry.exerciseId,sets:Math.max(1,entry.sets.length)}))};templateEditor(template,true);}
 function templateEditor(template,isNew=false){view.templateDraft=template?structuredClone(template):{id:uid(),name:'Новый шаблон',entries:[]};view.templateIsNew=isNew||!data.templates.some(item=>item.id===view.templateDraft.id);renderTemplateEditor();}
@@ -223,15 +274,19 @@ function openCatalog(options={}){
     const exercises=data.exercises.filter(ex=>(!group.value||ex.group===group.value)&&(favorites.value!=='favorites'||ex.favorite)&&`${ex.name} ${ex.machine} ${ex.equipment}`.toLocaleLowerCase('ru-RU').includes(term)).sort((a,b)=>Number(b.favorite)-Number(a.favorite)||a.name.localeCompare(b.name,'ru'));
     for(const ex of exercises){
       const card=el('div','catalog-item');const favorite=action(ex.favorite?'★':'☆','favorite',()=>{ex.favorite=!ex.favorite;persist();renderResults();});favorite.setAttribute('aria-label',ex.favorite?'Убрать из избранного':'В избранное');favorite.setAttribute('aria-pressed',String(ex.favorite));card.append(favorite);
-      const info=el('div','catalog-info');info.append(el('h3','',exerciseName(ex)),el('small','',`${groupName(ex.group)} · ${ex.equipment||'Своё упражнение'}`));const actions=el('div','button-row');if(options.onPick)actions.append(action('Выбрать','secondary',()=>options.onPick(ex.id)));actions.append(action('Техника','outline',()=>openTechnique(ex,()=>openCatalog(options))),action('Настроить','quiet',()=>exerciseSettings(ex,()=>openCatalog(options))));info.append(actions);card.append(info);results.append(card);
+      const info=el('div','catalog-info');info.append(el('h3','',exerciseName(ex)),el('small','',`${groupName(ex.group)} · ${ex.equipment||'Своё упражнение'}`));const actions=el('div','button-row');if(options.onPick)actions.append(action('Выбрать','secondary',()=>options.onPick(ex.id)));actions.append(action(EXERCISE_MEDIA[ex.baseId]?.video?'▶ Техника · видео':EXERCISE_MEDIA[ex.baseId]?'Техника · фото':'Техника','outline',()=>openTechnique(ex,()=>openCatalog(options))),action('Настроить','quiet',()=>exerciseSettings(ex,()=>openCatalog(options))));info.append(actions);card.append(info);results.append(card);
     }
     if(!exercises.length)results.append(el('p','group-empty','Ничего не найдено. Можно добавить своё упражнение.'));
+    else results.prepend(el('p','small catalog-count',quantity(exercises.length,['упражнение','упражнения','упражнений'])));
   };
   search.addEventListener('input',renderResults);group.addEventListener('change',renderResults);favorites.addEventListener('change',renderResults);renderResults();
   body.append(action('+ Своё упражнение','primary full spaced',()=>exerciseForm(null,options)),action('Назад','quiet full',options.onBack||closeSheet));showSheet('Упражнения',body);
 }
 function openTechnique(ex,onBack){
   const body=el('div');body.append(el('p','small',`${groupName(ex.group)} · ${ex.equipment}`));const guide=Object.hasOwn(GUIDES,ex.baseId)?GUIDES[ex.baseId]:null;
+  const media=EXERCISE_MEDIA[ex.baseId];if(media)body.append(techniqueMedia(ex,media));
+  if(ex.baseId==='squat')body.append(el('p','notice','Показан базовый присед без отягощения. У приседаний со штангой, в Смите и других вариантов есть отдельные карточки в каталоге.'));
+  body.append(el('p','footnote',`Оценка нагрузки: ${n(exerciseMET(ex))} MET. Расход зависит от массы тела, повторов и принятых пауз.`));
   if(guide){for(const [key,label] of [['setup','Настройка'],['movement','Выполнение'],['avoid','На что обратить внимание']]){const section=el('section','technique-section');section.append(el('h3','',label));const list=el('ul');guide[key].forEach(text=>list.append(el('li','',text)));section.append(list);body.append(section);}const links=el('div','source-links');for(const [label,url] of guide.sources){const link=el('a','',label);link.href=url;link.target='_blank';link.rel='noopener noreferrer';links.append(link);}body.append(links);}
   else body.append(el('p','notice spaced','Для этого упражнения пока нет готовой инструкции. Добавь свою заметку или ссылку на разбор техники.'));
   if(ex.setup){const section=el('section','technique-section');section.append(el('h3','','Мои настройки'),el('p','preserve-lines',ex.setup));body.append(section);}
@@ -270,19 +325,20 @@ async function exportBackup(updateTimestamp=true){
 }
 async function importBackup(file){
   if(file.size>15*1024*1024){notify('Файл слишком большой. Максимальный размер — 15 МБ.');return;}
-  let restored;try{const envelope=JSON.parse(await file.text());if(envelope.app!=='full-body-journal')throw new Error('Выбери файл резервной копии Full Body.');restored=validateData(envelope.data);}catch(error){notify(error instanceof SyntaxError?'Не удалось прочитать JSON-файл. Текущая история не изменена.':error.message);return;}
+  let restored;try{const envelope=JSON.parse(await file.text());if(envelope.app!=='full-body-journal')throw new Error('Выбери файл резервной копии Full Body.');restored=validateData(envelope.data);upgradeCatalog(restored);}catch(error){notify(error instanceof SyntaxError?'Не удалось прочитать JSON-файл. Текущая история не изменена.':error.message);return;}
   const body=el('div','stack');body.append(el('p','',`В копии: ${quantity(restored.workouts.length,['тренировка','тренировки','тренировок'])}, ${quantity(restored.exercises.length,['упражнение','упражнения','упражнений'])}${restored.draft?' и незавершённая тренировка':''}.`),el('p','','Восстановление заменит текущую историю, шаблоны, настройки и черновик на этом устройстве.'),action('Сначала скачать текущую копию','outline',()=>exportBackup(false)),action('Заменить данные копией','primary',async()=>{if(await commit(restored)){closeSheet();view.exerciseId='';view.open=new Set(['legs']);render();notify('История восстановлена.');}}),action('Отмена','quiet',closeSheet));showSheet('Восстановить историю?',body);
 }
 function registerAgentTools(){
   if(!document.modelContext?.registerTool)return;
   const definitions=[
-    {name:'get_training_summary',title:'Сводка тренировок',description:'Read completed workout totals for a calendar month. Does not modify the journal.',inputSchema:{type:'object',properties:{month:{type:'string',pattern:'^\\d{4}-\\d{2}$'}},required:['month'],additionalProperties:false},annotations:{readOnlyHint:true},execute:({month})=>{if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw new Error('Expected YYYY-MM');const workouts=data.workouts.filter(workout=>workout.date.startsWith(month)),sets=workouts.flatMap(workout=>workout.entries.flatMap(entry=>entry.sets));return {month,workouts:workouts.length,sets:sets.length,reps:sets.reduce((sum,set)=>sum+parseNumber(set.reps),0)};}},
+    {name:'get_training_summary',title:'Сводка тренировок',description:'Read completed workout totals for a calendar month. Does not modify the journal.',inputSchema:{type:'object',properties:{month:{type:'string',pattern:'^\\d{4}-\\d{2}$'}},required:['month'],additionalProperties:false},annotations:{readOnlyHint:true},execute:({month})=>{if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw new Error('Expected YYYY-MM');const workouts=data.workouts.filter(workout=>workout.date.startsWith(month)),sets=workouts.flatMap(workout=>workout.entries.flatMap(entry=>entry.sets));const energy=periodEnergy(workouts,data.exercises,data.settings);return {month,workouts:workouts.length,sets:sets.length,reps:sets.reduce((sum,set)=>sum+parseNumber(set.reps),0),estimatedActiveKcal:Math.round(energy.total),workoutsWithoutCalorieEstimate:energy.missing};}},
     {name:'show_training_screen',title:'Открыть экран дневника',description:'Navigate to dashboard, workout or settings. Does not create or complete a workout.',inputSchema:{type:'object',properties:{page:{type:'string',enum:['dashboard','workout','settings']}},required:['page'],additionalProperties:false},annotations:{readOnlyHint:false},execute:({page})=>{if(!['dashboard','workout','settings'].includes(page))throw new Error('Unknown screen');navigate(page);return {page};}}
   ];
   for(const definition of definitions){try{Promise.resolve(document.modelContext.registerTool(definition)).catch(()=>{});}catch{}}
 }
 async function boot(){
-  try{const saved=await loadData();data=saved?validateData(saved):initialData();if(!saved)await persist();else status.textContent='Сохранено';if(data.draft)view.open=new Set([exById(data.draft.entries[0]?.exerciseId)?.group||'legs']);render();registerAgentTools();}
+  try{const saved=await loadData();data=saved?validateData(saved):initialData();const changed=upgradeCatalog(data);if(!saved||changed||!saved.settings.energy)await persist();else status.textContent='Сохранено';if(data.draft)view.open=new Set([exById(data.draft.entries[0]?.exerciseId)?.group||'legs']);render();registerAgentTools();}
   catch(error){status.textContent='Недоступно';main.replaceChildren(empty('Не удалось открыть дневник','Данные не перезаписаны. Попробуй закрыть другие вкладки и открыть приложение снова.',action('Повторить','primary full',()=>location.reload())));const message=el('p','form-error',error.message||'Хранилище браузера недоступно.');main.append(message);}
 }
 boot();
+
