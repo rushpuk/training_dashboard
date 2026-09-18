@@ -60,7 +60,9 @@ export function validateData(raw){
   const energy=value=>{
     if(value===undefined||value===null)return null;
     if(!obj(value)||(value.bodyWeight!==null&&(!Number.isFinite(value.bodyWeight)||value.bodyWeight<25||value.bodyWeight>350))||!Number.isFinite(value.secondsPerRep)||value.secondsPerRep<1||value.secondsPerRep>10||!Number.isInteger(value.restSeconds)||value.restSeconds<0||value.restSeconds>300)fail();
-    return {bodyWeight:value.bodyWeight,secondsPerRep:value.secondsPerRep,restSeconds:value.restSeconds};
+    if(value.intensity!==undefined&&!['standard','vigorous'].includes(value.intensity))fail();
+    if(value.durationMinutes!==undefined&&value.durationMinutes!==null&&(!Number.isFinite(value.durationMinutes)||value.durationMinutes<1||value.durationMinutes>600))fail();
+    return {bodyWeight:value.bodyWeight,secondsPerRep:value.secondsPerRep,restSeconds:value.restSeconds,intensity:value.intensity||'standard',durationMinutes:value.durationMinutes??null};
   };
   if(!obj(raw)||raw.version!==1||!obj(raw.settings))fail();
   if(!['system','light','dark'].includes(raw.settings.theme)||!Number.isInteger(raw.settings.defaultSets)||raw.settings.defaultSets<1||raw.settings.defaultSets>20||typeof raw.settings.singleOpen!=='boolean')fail();
